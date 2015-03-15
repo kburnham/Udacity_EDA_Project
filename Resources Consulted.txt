@@ -1,0 +1,22 @@
+Resources Consulted
+
+Information about Propsper
+ - Wikipedia: https://en.wikipedia.org/wiki/Prosper_Marketplace
+ - Article from Review of Ecnomic Statistics using Propser data: https://b5c87fc5-a-62cb3a1a-s-sites.googlegroups.com/site/origbi/UsuryLaws.pdf
+
+ External Data Sources
+  - 3 month secondary market T-Bill Rate: http://research.stlouisfed.org/fred2/series/DTB3
+  - Consumer credit historical rates: http://www.federalreserve.gov/releases/g19/HIST/cc_hist_r_flows.html
+ 
+Technical Resources (in addition to the Udacity EDA course)
+ - Loops in R: https://blog.udemy.com/r-tutorial/
+ - Tidy data and tidyr: http://vita.had.co.nz/papers/tidy-data.html
+ - Using dplyr: http://datascience.la/hadley-wickhams-dplyr-tutorial-at-user-2014-part-1/
+ - inline code and variables with knitr: http://stackoverflow.com/questions/10902504/r-markdown-accessing-variable-from-code-chunk-variable-scope
+ - ggplot axis labels on an angle: http://dsgeek.com/2014/09/19/Customizingggplot2charts.html
+ - ggplot annotation: http://docs.ggplot2.org/0.9.3/annotate.html
+ - in-chart legends: http://discussions.udacity.com/t/inline-legend-with-dates-on-the-x-axis/10016
+ - computing correlations between ranked and continuous variables: http://discussions.udacity.com/t/computing-correlation-between-a-continuous-variable-and-a-ranked-one/7039/3
+   			:http://stats.stackexchange.com/questions/119835/correlation-between-a-nominal-iv-and-a-continuous-dv-variable
+   			
+

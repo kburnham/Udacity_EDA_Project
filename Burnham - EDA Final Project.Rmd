@@ -1,0 +1,721 @@
+Prosper Loan Date by Kevin Burnham
+========================================================
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, packages}
+# Load all of the packages that you end up using
+# in your analysis in this code chunk.
+
+# Notice that the parameter "echo" was set to FALSE for this code chunk.
+# This prevents the code from displaying in the knitted HTML output.
+# You should set echo=FALSE for all code chunks in your file.
+library(knitr)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(gridExtra)
+library(memisc)
+```
+
+```{r echo=FALSE, Load_the_Data}
+    # Load the Data
+#setwd("/Users/kb/Documents/MOOCs/datascience/EDA/Project3_Burnham")
+loandata <- read.csv("prosperLoanData.csv")
+#keep only the variables we are interested in
+ld <-loandata[,c("Term", "LoanStatus", "ListingCreationDate", "BorrowerRate", 
+                 "ProsperRating..numeric.","ListingCategory..numeric.", 
+                 "BorrowerState", "Occupation", "EmploymentStatus", 
+                 "EmploymentStatusDuration", "BorrowerState", "Occupation", 
+                 "EmploymentStatus", "EmploymentStatusDuration", 
+                 "IsBorrowerHomeowner", "DateCreditPulled", 
+                 "CreditScoreRangeLower", "FirstRecordedCreditLine", 
+                 "CurrentDelinquencies", "AmountDelinquent", 
+                 "DelinquenciesLast7Years", "DebtToIncomeRatio","IncomeRange",
+                 "IncomeVerifiable", "LoanOriginalAmount", 
+                 "LoanOriginationDate", "LoanOriginationQuarter", 
+                 "ListingCreationDate")]
+
+#change some column names
+#note - the relationship between CreditScoreLower and Upper is perfectly linear
+ld <- plyr::rename(ld, c("ProsperRating..numeric." = "ProsperRating",
+                         "ListingCategory..numeric." = "ListingCategory",
+                         "CreditScoreRangeLower" = "CreditScore"))
+```
+
+#Introduction
+In this project we will explore data from Prosper loans that contains information on 113937 loans made through Prosper between 2005 and 2014. For the purposes of this project we will imagine that we are a competitor to Prosper and will attempt to use these data to predict the interest rate that a potential borrower would be offered by Prosper so that we can offer a slightly cheaper rate.
+
+According to [Wikipedia](https://en.wikipedia.org/wiki/Prosper_Marketplace), Prosper is America's first peer-to-peer lender in which borrowers request funds and other individuals and institutions can fund such loan requests. Although Prosper loans were initially auctioned, since July 2009 rates are set by Prosper's model and lenders can choose whether or not they wish to fund the loan. Prosper determines its rates using a traditional credit score and its own proprietary Prosper score based on their own historical data.
+
+
+```{r echo = FALSE}
+#convert variables to appropriate data types
+ld$Term <- as.ordered(ld$Term)
+ld$ListingCategory <- factor(ld$ListingCategory)
+#dates
+ld$ListingCreationData <- base::as.Date(ld$ListingCreationDate, "%Y-%m-%d")
+ld$LoanOriginationDate <- base::as.Date(ld$LoanOriginationDate, "%Y-%m-%d")
+ld$FirstRecordedCreditLine <- base::as.Date(ld$FirstRecordedCreditLine,
+                                            "%Y-%m-%d")
+ld$ListingCreationDate <- base::as.Date(ld$ListingCreationDate, "%Y-%m-%d")
+ld$LoanMonth <- factor(format(ld$LoanOriginationDate, format = "%Y-%m"))
+#combine IncomeRange $0 and "Not employed", convert "Not Displayed" to NA
+ld$IncomeRange[ld$IncomeRange == "Not employed"] <- "$0"
+ld$IncomeRange[ld$IncomeRange == "Not displayed"] <- NA
+ld$IncomeRange <- factor(ld$IncomeRange, levels = c(NA, "$0", "$1-24,999",
+                                                        "$25,000-49,999", 
+                                                        "$50,000-74,999",
+                                                        "$75,000-99,999",
+                                                        "$100,000+"))
+
+#make ProsperRating an ordered factor
+ld$ProsperRating <- ordered(ld$ProsperRating)
+
+#a variable to indicate what month the loan was issued in
+
+ld$Month <- factor(months(ld$LoanOriginationDate))
+ld$Month <- factor(ld$Month, levels = c("January", "February", "March",
+                                        "April", "May", "June", "July", 
+                                        "August", "September", "October",
+                                        "November", "December"))
+
+```
+
+```{r, echo=FALSE}
+#add prevailing interest rates obtained from the FederalReserve
+TBRate <- read.csv("Fed3monthTbillRate.csv")
+TBRate$Date <- as.Date(TBRate$Date,"%Y-%m-%d")
+TBRate$LoanMonth <- format(TBRate$Date, format = "%Y-%m")
+#merge the two data sets based on LoanMonth
+ld <- merge(ld, TBRate)
+#need to divide by 100 to match BorrowerRate
+ld$TB3MS <- ld$TB3MS / 100
+#so now I need to create a column in ld that uses the month from 
+#ld$LoanOrigination, compares it to the month for TBRate$Data and then puts
+#the TBRate$TB3MS in it's place
+
+CCRate <-read.csv("cc_rates.csv", header=FALSE)
+names(CCRate) <- c("Date", "CCRate")
+CCRate$CCRate <- CCRate$CCRate / 100
+CCRate$Date <- as.Date(CCRate$Date, "%m/%d/%y")
+CCRate$LoanMonth <- format(CCRate$Date, format = "%Y-%m")
+ld <- merge(ld, CCRate)
+```
+
+# Univariate Plots Section
+
+Now let's look at some of our variables. Our dependent variable is `BorrowerRate`. We are trying to predict the rate that a borrower would be offered on the Prosper website. Also, since Prosper changed how it set the rates for its loans we will create a `NewRegime` variable that is `TRUE` if the loan has a `ProsperRating`, the first of which occurs on July 20, 2009.
+
+```{r echo=FALSE, warning=FALSE, Univariate_Plots}
+
+ld$NewRegime <- !is.na(ld$ProsperRating)
+
+print("Summary of Borrower Rate")
+summary(ld$BorrowerRate)
+
+ggplot(aes(x = BorrowerRate), data = ld) +
+  geom_histogram(binwidth = .005) +
+  coord_cartesian(xlim = c(.05, .35)) +
+  ggtitle("Histogram of Interest Rates")
+
+
+p1 <- ggplot(aes(x = sqrt(BorrowerRate)), data = ld) + 
+  geom_histogram(binwidth = .01) +
+  ggtitle("Histogram of sqrt(Interest Rates)")
+
+p2 <- ggplot(aes(x = sqrt(BorrowerRate)), data = subset(ld, NewRegime == T)) + 
+  geom_histogram(binwidth = .01) +
+  ggtitle("Loans since July 20 2009")
+
+grid.arrange(p1, p2, ncol = 2)
+
+```
+
+The data appear to be more normally distributed when square root transformed. The older data contain a number of very low interest rates (including 0) which are not found in the new data. In either event we note a spike in rates at around 35%. We need to investigate this spike since the presence of these outlier values will surely affect the predictions of our linear model. 
+
+Below we plot a daily count of all loans greater at rates above 32%. It appears to show spikes and crashes, the first of which seems to coincide with the financial crisis of 2008. 
+
+```{r, echo=FALSE}
+##were they all around the same date?
+ggplot(aes(x = LoanOriginationDate), data = subset(ld, BorrowerRate >= .32)) + 
+  geom_histogram(binwidth = 10) +
+  ggtitle("Count of loans with interest rate greater than 30%")
+```
+
+Let's look more closely at the loans in the histogram spike. Are they at very specific rates or are there just a lot of loans in that range?
+```{r, echo=FALSE}
+ggplot(aes(x = BorrowerRate), data = subset(ld, BorrowerRate >= .31 & 
+                                              BorrowerRate < .32)) +
+  geom_histogram(binwidth= .0001)
+```
+
+Looks like there are a lot of loans at two specific rates. Hard to see exactly what they are in the graph, so we print counts for all of the rates in that area.
+
+```{r, echo=FALSE}
+w <- seq(.3175,.32, by = .0001)
+for (i in w)
+{
+  print(i)
+  print(length(ld$BorrowerRate[ld$BorrowerRate == round(i, digits = 4)]))
+}
+```
+
+We find 1651 loans with an interest rate of exactly 31.99% and 3672 loans with an interest rate of  31.77%. We will look more closely at these loans to see if we can figure out why there are so many at these rates. 
+
+Although there is some overlap, it appears that the 31.99% rates were offered in 2011 and the 31.77% in 2012. Is there an equivalent maximum for loans after that date that we have missed? Let's get a histogram of rates for loans in 2013 and after.
+
+```{r, echo=FALSE}
+ggplot(aes(x = BorrowerRate), data = subset(ld, LoanOriginationDate >= 
+                                              as.Date("2013/01/01"))) +
+  coord_cartesian(xlim = c(.3, .33)) +
+  geom_histogram(binwidth = .0001)
+
+#what's the exact rate?
+ld2013 <- subset(ld, LoanOriginationDate >= as.Date("2013/01/01"))
+w <- seq(.313,.314, by = .0001)
+for (i in w)
+{
+  print(i)
+  print(length(ld2013$BorrowerRate[ld2013$BorrowerRate == i]))
+}
+                                                     
+```
+
+For loans 2013 and beyond we find that there are many loans (718) at 31.34%.
+
+We now expect to find a similar rate ceiling in the data between the start of the new rate setting method in December 2009 and the beginning of 2011 when the ceiling appears to have become 31.99%.
+
+```{r, echo=FALSE}
+
+pre2011 <- subset(ld, LoanOriginationDate <= as.Date("2011/01/01") 
+                  & NewRegime == TRUE)
+
+ggplot(aes(x = BorrowerRate), data = pre2011) + 
+  coord_cartesian(xlim = c(.345, .355)) +
+  geom_histogram(binwidth = .0001)
+
+
+#what's the exact rate where we find the spike?
+w <- seq(.3495,.3502, by = .0001)
+for (i in w)
+{
+  print(i)
+  print(length(pre2011$BorrowerRate[pre2011$BorrowerRate == i]))
+}
+    
+```
+
+For loans between December 2009 and January 2011 we find a spike in the histogram of rates at 35.00% with 800 loans. 
+
+We create a dataset containing only those loans where `BorrowerRate` is equal to one of the ceilings we have identified above, and then plot counts of those loans across time. We see that those rates in fact appear to be very limited to specific time windows. 
+
+```{r, echo=FALSE}
+ldHighRates <- subset(ld, BorrowerRate == .3177 | BorrowerRate == .3199 | 
+                        BorrowerRate == .35 | BorrowerRate == .3134)
+ldHighRates$BorrowerRate <- factor(ldHighRates$BorrowerRate)
+
+ggplot(aes(x = LoanOriginationDate, fill = BorrowerRate), data = ldHighRates) +
+  coord_cartesian(xlim = c(as.Date("2009/07/20"), as.Date("2014/03/01"))) +
+  geom_histogram(color = "black", binwidth = 50)
+
+```
+
+Now we create a new variable `IsCeiling` for variables in the new regime. It is a Boolean that indicates if the loan was made at the prevailing ceiling rate that we have identified. Note that only a fraction of total loans were made at this ceiling rate (7.6%).
+
+```{r, echo=FALSE}
+
+#create the isCeiling variable to indicate the loan was 
+#made at the prevailing rate ceiling
+ld$IsCeiling <- 
+  (ld$BorrowerRate == .35 & ld$LoanOriginationDate < as.Date("2011/01/01") & 
+                   ld$LoanOriginationDate > as.Date("2009/07/20")) |
+  (ld$BorrowerRate == .3199 & ld$LoanOriginationDate < as.Date("2012/01/01") &
+     ld$LoanOriginationDate >= as.Date("2011/01/01")) | 
+  (ld$BorrowerRate == .3177 & ld$LoanOriginationDate < as.Date("2013/01/01") & 
+     ld$LoanOriginationDate >= as.Date("2012/01/01")) |
+  (ld$BorrowerRate == .3134 & ld$LoanOriginationDate >= as.Date("2013/01/01"))
+                                                                                                                                                                                                                                                                 
+```
+
+
+So it appears that the spike we see in the histogram of all rates around 34% is due to a cap on the rates that Prosper offers to its borrowers (or at least most of them). That cap changes about once a year, but it remains unclear if it is due to regulatory factors or internal Prosper decisions. According to [this article](https://b5c87fc5-a-62cb3a1a-s-sites.googlegroups.com/site/origbi/UsuryLaws.pdf?attachauth=ANoY7co2DMZiQ3ib-xpGPjFRYgDcZX5M3BUrocX4NED2KiXHgIZOR8jqsPSreCmz_kUuxHWL0qnLOnay0Uz8g3-Gbw7LpNKlb-BFlZuntj_sMzTrR-NsLp9kgsLePOdCIPfkoCMnuKw1KV2Rukhf9mloL02h3yHyTymq73GzzUFUQBmaiua6TB_BUoILkNqfZjB-AhLyv5MrRGq_ATQMFG2MhhsYJanm-w%3D%3D&attredirects=0) up until April 15 2008 the maximum rate Prosper could offer a lender was determined by regulations in the borrowers state, but after that point there was a cap of 36% for all states except Texas. This suggests that the rate ceilings we are finding in the data are set internally by Prosper. 
+
+Since we are ultimately interested in predicting rates offered by Prosper, from this point forward we will mainly be interested in loans made since December 19 2009 under the new rate setting mechanism. We subset the data accordingly before analyzing independent variables. 
+
+```{r, echo=FALSE}
+#create subset of the dataframe for loans that are TRUE for NewRegime
+ldNew <- subset(ld, NewRegime == TRUE)
+```
+
+
+Now we look at our independent variables, many of which are ranked. We expect that any factor that increases the perceived probabilty of loan default will correlate with higher interest rates. 
+
+- `LoanOriginalAmount`
+
+```{r, echo=FALSE}
+
+summary(ldNew$LoanOriginalAmount)
+
+p1 <- ggplot(aes(x = LoanOriginalAmount), data = ldNew) + 
+  geom_histogram(binwidth = 500) + 
+  coord_cartesian(xlim = c(500,26000)) +
+  ggtitle("Histogram of Loan Amounts")
+
+p2 <- ggplot(aes(x = sqrt(LoanOriginalAmount)), data = ldNew) + 
+  geom_histogram(binwidth = 10) + 
+  ggtitle("Histogram of Square Root of Loan Amounts")
+
+grid.arrange(p1, p2, ncol = 1)
+```
+
+Here we see that most loans are multiples of $5000. The bulk of the loans appear to be in the $5000 range with progressively fewer of the larger loans. A square root transformation of the data yield a more normal distribution but it is still lumpy.
+
+ - Term - Most of the loans are for a 36-month period. 
+ 
+```{r, echo=FALSE}
+ggplot(aes(x = Term), data = ldNew) +
+  geom_histogram()
+summary(ldNew$Term)
+```
+ 
+ - `IncomeRange` - we expect that individuals with higher incomes are likely to pay lower rates. Most of the borrowers have yearly incomes of at least $25000.
+ 
+```{r, echo=FALSE}
+summary(ldNew$IncomeRange)
+ggplot(aes(x = IncomeRange), data = ldNew) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_histogram()
+```
+ 
+- `CreditRating` - this number is obtained from a traditional credit report. The untransformed data is positively skewed, but looks more normal when square root transformed. 
+
+```{r echo=FALSE}
+summary(ldNew$CreditScore)
+ggplot(aes(x = CreditScore), data = ldNew) +
+  geom_histogram(binwidth = 10)
+
+ggplot(aes(x = sqrt(CreditScore)), data = ldNew) +
+  geom_histogram(binwidth = .1)
+
+```
+
+ - `IsBorrowerHomeowner` - This variable simply indicates whether or not the borrower owns a home. A small majority of borrowers are homeowners.
+ 
+```{r, echo=FALSE, fig.width = 4, fig.height=4}
+summary(ldNew$IsBorrowerHomeowner)
+ggplot(aes(x = IsBorrowerHomeowner), data = ldNew) +
+  geom_histogram()
+```
+
+ - `ListingCategory` - This indicates the stated purpose of the loan. Most lenders are seeking to consolidate other loans. This is even true for those that are taking high interest loans which seems odd since consolidation loans are usually for the purpose of lowering rates.
+ 
+```{r, echo=FALSE, fig.width=10}
+labels = c("Not Available", "Debt Consolidation", "Home Improvement", 
+           "Business", "Personal Loan", "Student Use", "Auto","Other", 
+           "Baby & Adoption", "Boat", "Cosmetic Procedure", "Engagement Ring", 
+           "Green Loans", "Household Expenses", "Large Purchases", 
+           "Medical/Dental", "Motorcycle", "RV", "Taxes", "Vacation", 
+           "Wedding Loans") 
+p1 <- ggplot(aes(x = ListingCategory), data = ld) +
+  geom_histogram() +
+  scale_x_discrete(labels = labels) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  xlab("Reason for Loan")
+
+p2 <- ggplot(aes(x = ListingCategory), data = subset(ld, BorrowerRate > .32)) +
+  geom_histogram() +
+  scale_x_discrete(labels = labels) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  xlab("Reason for Loan - rates over 32%")
+
+grid.arrange(p1,p2, ncol = 1)
+```
+
+
+# Univariate Analysis
+
+### What is the structure of your dataset?
+
+The dataset includes information from 110079 loans measured in 31 variables. We have continuous variables as well as categories and ranked categories. 
+
+
+### What is/are the main feature(s) of interest in your dataset?
+
+As noted, the main feature of interest is the `BorrowerRate`. We would like to model this rate so that we can guess at the rates a borrower would receive from Prosper.
+
+### What other features in the dataset do you think will help support your investigation into your feature(s) of interest?
+
+We will investigate `LoanOriginationAmount', 'Term', 'CreditScore', 'IncomeRange', 'IsBorrowerHomeowner', `ListingCategory' and `Month`. We also add data on 3-month T-bill rates (`TB3MS`)  and credit card rates (`CCRate`) obtained from the FederalReserve. 
+
+### Did you create any new variables from existing variables in the dataset?
+
+We created a `Month` variable to determine if interest rates changed according to the time of the year. We reasoned that there may be times of the year when borrowers are more desperate and willing to accept higher rates. 
+
+We also created a `NewRegime` variable, a Boolean indicating whether or not the loan was offered after the change in Prosper's methodology. We treat any loan with a `ProsperRating` as part of the new regime. 
+
+As noted above, we created an `IsCeiling` Boolean that indicates if the loan was made at the prevailing Prosper rate ceiling.
+
+We also created two variables from data obtained outside the dataset. Both to indicate prevailing interest rates at the time of the loan. They are `TB3MS` to indicate the prevailing interest rates on US 3-month Treasury Bills and `CCRate` to indicate the prevailing credit card interest rates at the time of the loans. Both these datasets were obtained from the Federal Reserve.
+
+### Of the features you investigated, were there any unusual distributions? Did you perform any operations on the data to tidy, adjust, or change the form of the data? If so, why did you do this?
+
+`BorrowerRate`, `LoanOriginalAmount`  and `CreditScore` all had long-tailed distributions and so were square root transformed so that the distribution would be more normal. The data were adjusted so that dates would be treated as such by R. We also made sure that variables were of the appropriate data type and that ranked variables were ordered correctly. 
+
+The `BorrowerRate` variable was of particular concern due to a spike in loans at around 35%. This spike represents a challenge for linear modeling of the data. Our investigation suggests that the spike is due to a Prosper internal rate ceiling. 
+
+# Bivariate Plots Section
+
+We now want to look at the relationship between our dependent variable (`BorrowerRate`) and the dependent variables we have identified above.
+
+ - `CreditScore`
+
+```{r echo=FALSE, Bivariate_Plots}
+result <- as.character(round(cor(ldNew$CreditScore, sqrt(ldNew$BorrowerRate)), digits = 4))
+
+#sqrt(BorrowerRate) vs. CreditRating
+ggplot(aes(x = CreditScore, y = sqrt(BorrowerRate)), data = ldNew) +
+  geom_point(alpha = .03, position = "jitter") +
+  stat_smooth(method = "lm") +
+  annotate("text", x = 860, y = .6, label = paste("r = ", result))
+
+```
+
+ - This scatter plot does seem to show the expected negative correlation between `CreditScore` and `BorrowerRate`, though we also note that the data are very noisy. A Pearson's test of reveals a negative correlation between `CreditScore` and `BorrowerRate` (r = `r result`) and so is a good candidate for inclusion in our model.
+
+ - `IncomeRange`
+
+```{r, echo=FALSE}
+ggplot(aes(x = IncomeRange, y = sqrt(BorrowerRate)), data = ldNew) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_boxplot()
+
+#compare credit score with income range
+
+ggplot(aes(x = IncomeRange, y = CreditScore), data = ldNew) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_boxplot()
+
+```
+
+ - we would expect that borrowers with higher incomes are less risky and could therefore get better rates. Using Pearson's test, we calculate a negative correlation between `IncomeRange` and `BorrowerRate` (\rho = `r round(cor.test(ldNew$BorrowerRate, as.integer(ldNew$IncomeRange), method = "pearson")$estimate, digits = 3)`). So `IncomeRange` is also likely to be a good predictor variable for our model.
+ 
+ - `DebtToIncomeRatio` 
+
+```{r, echo=FALSE}
+ggplot(aes(x = sqrt(DebtToIncomeRatio), y = sqrt(BorrowerRate)), data = ldNew) +
+  geom_point(alpha = .05)
+
+cor(ldNew$BorrowerRate[!is.na(ldNew$DebtToIncomeRatio)], 
+    ldNew$DebtToIncomeRatio[!is.na(ldNew$DebtToIncomeRatio)])
+```
+ 
+As expected, `DebtToIncomeRatio` is positively correlated with `BorrowerRate`, but the relationship is not particularly strong(r = `r round(cor(ldNew$BorrowerRate[!is.na(ldNew$DebtToIncomeRatio)], ldNew$DebtToIncomeRatio[!is.na(ldNew$DebtToIncomeRatio)]), digits = 4)`)
+
+ - `Term`
+ 
+```{r, echo=FALSE}
+ggplot(aes(x = Term, y = sqrt(BorrowerRate)), data = ldNew) +
+  geom_boxplot()
+
+by(ldNew$BorrowerRate, ldNew$Term, summary)
+```
+
+It appears that rates for the 12-month loans are slightly better that for those with longer terms. However, there appears to be very little correlation between `BorrowerRate` and `Term` (r = `r round(cor(sqrt(ldNew$BorrowerRate), as.integer(ldNew$Term)), digits = 4)`).
+ 
+ - `LoanOriginalAmount` - 
+ 
+```{r, echo=FALSE}
+result <- round(cor(sqrt(ldNew$LoanOriginalAmount), sqrt(ldNew$BorrowerRate)), digits = 3)
+
+ggplot(aes(x = sqrt(LoanOriginalAmount), y = sqrt(BorrowerRate)), 
+       data = ldNew) +
+  geom_point(alpha = .05) +
+  stat_smooth(method = "lm") +
+  annotate("text", x = 170, y = .58, label = paste("r = ", result))
+```
+
+We find a negative correlation between `LoanOriginalAmount` and `BorrowerRate` (r = `r round(cor(sqrt(ldNew$LoanOriginalAmount), sqrt(ldNew$BorrowerRate)), digits = 3)`). This may be due to the fact that the administrative costs of servicing, likely to be relatively uniform for all loans, make up a larger portion of the cost of a loan for small loans.
+
+ - `IsBorrowerHomeowner` -
+ 
+```{r,echo=FALSE}
+ttest <- by(ld$BorrowerRate, ld$IsBorrowerHomeowner, t.test)
+
+ggplot(aes(x = IsBorrowerHomeowner, y = BorrowerRate), data = ldNew) +
+  geom_boxplot() +
+  annotate("text", x = .7, y = .4, label = paste("t = ", round(ttest$True$statistic, digits = 2))) +
+  annotate("text", x = .83, y = .37, label = "p-value < 2.2e-16")
+```
+
+We find a significant difference between rates offered to homeowners compared to non-homeowners.
+
+ - `ListingCategory`
+ 
+```{r,echo=FALSE}
+ggplot(aes(x = ListingCategory, y = BorrowerRate), data = ldNew) +
+  scale_x_discrete(labels = labels) + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_boxplot() +
+  stat_summary(fun.y = mean, geom = "point", shape = 5, size = 2)
+  
+#ANOVA
+fit <- aov(BorrowerRate ~ ListingCategory, data = ldNew)
+ftest <- summary(fit)[[1]]
+fvalue <- ftest$"F value"[1]
+prob <- round(ftest$"Pr(>F)"[1])
+```
+
+Here we see that loans for which the listing category is "Not Available" tend to have higher rates. This is unsurprising, but it does seem odd that loans for category "Other" are not similarly penalized. Loans for "Baby & Adoption" seem to have relatively low rates, most likely because only more worthy borrowers are seeking loans of this type. It also appears that numerous individuals have taken very high interest loans in order to purchase engagement rings. An ANOVA reveals that there are significant differences in the loans offered for different categories (F = `r round(fvalue, digits = 4)`, p < 2e-16).
+
+- Other interest rates
+
+We would expect that the rates on offer on Prosper would correlate with prevailing interest rates for other types of loans. Since most of the loans are for a period of 36 months, we will add a variable to our dataset that indicates the prevailng interest rate for these bonds at the time the Prosper loan was made. 
+
+```{r, echo=FALSE}
+p1 <- ggplot(aes(x = LoanOriginationDate, y = CCRate), data = ldNew) +
+  geom_line() 
+
+p2 <- ggplot(aes(x = LoanOriginationDate, y = TB3MS), data = ldNew) +
+  geom_line() 
+
+grid.arrange(p1,p2, ncol = 1)
+
+ggplot(aes(x = CCRate, y = BorrowerRate), data = ldNew) +
+  geom_point(position = "jitter")
+
+ggplot(aes(x = TB3MS, y = BorrowerRate), data = ldNew) +
+  geom_point(position = "jitter", alpha = .1)
+
+paste("Correlation between BorrowerRate and TB3MS = ", 
+      round(cor(ldNew$BorrowerRate, ldNew$TB3MS), digits = 4))
+paste("Correlation between BorrowerRate and CCRate = ", 
+      round(cor(ldNew$BorrowerRate, ldNew$CCRate), digits = 4))
+
+```
+
+In both cases we find only tiny positive correlations between `BorrowerRate` and the other rates. We also note that in most cases the Prosper rates are much higher than prevailing credit card interest rates. This suggests that people who borrow on Prosper are unable to obtain funding through more traditional channels. 
+
+ - Cyclical factors 
+ 
+It may be that rates on Prosper are higher or lower at different times of the year. To check that we create boxplots of `BorrowerRate` showing the rates in each of the different months of the year. 
+
+```{r, echo=FALSE}
+ggplot(aes(x = Month, y = BorrowerRate), data = ldNew) +
+  geom_boxplot() +
+  stat_summary(fun.y = mean, geom = "point") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+result <- summary(aov(BorrowerRate ~ Month, data = ldNew))
+
+f_value <- unclass(result)[[1]]$"F value"[1]
+
+
+```
+
+It does appear to be the case that rates are higher in the summer months (F = `r f_value`, p < 2e-16). It also seems to the be the case that in the beginning of the year `BorrowerRate` is negaitively skewed and at the end of the year it is positively skewed with a relatively small number of high interest loans that bring up the average. 
+
+
+# Bivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. How did the feature(s) of interest vary with other features in the dataset?
+
+As noted above we find negative correlations between `BorrowerRate` and `CreditScore`, `IncomeRange` and `LoanOriginalAmount`. We fail to find expected correlation between `BorrowerRate` and `CCRate`. We find the length of a loan to be a poor predictor of the rate for that loan. 
+
+### Did you observe any interesting relationships between the other features (not the main feature(s) of interest)?
+
+It was surprising to see that `CreditScore` and `IncomeRange` did not correlate very strongly. (r = `r cor(ldNew$CreditScore, as.integer(ldNew$IncomeRange))`)
+
+### What was the strongest relationship you found?
+
+Unsuprisingly, the strongest relationship that we found was between `BorrowerRate` and `CreditScore`.
+
+# Multivariate Plots Section
+
+
+```{r echo=FALSE, Multivariate_Plots}
+ggplot(aes(x = IncomeRange, y = BorrowerRate, fill = IsBorrowerHomeowner), 
+       data = ldNew) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_boxplot()
+```
+
+At each income range, homeowners tend to pay lower rates. 
+
+```{r echo=FALSE}
+ggplot(aes(x = IncomeRange, y = BorrowerRate, fill = IncomeVerifiable), 
+       data = ldNew) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_boxplot()
+```
+
+Those that are unable to provide proof of their stated income pay higher rates. This appears to be true even for those that have no income, but the divergence is especially significant at the higher income ranges.
+
+```{r, echo=FALSE}
+ggplot(aes(x = CreditScore, y = BorrowerRate, color = IsBorrowerHomeowner), 
+       data = ldNew) +
+    geom_point(alpha = 1, position = "jitter") +
+    coord_cartesian(xlim = c(550, 900))
+```
+
+The lowest rates are payed by homeowners with good credit. 
+
+```{r, echo=FALSE}
+ggplot(aes(x = CreditScore, y = BorrowerRate, color = IncomeRange), 
+       data = ldNew) +
+    geom_point(alpha = 1, position = "jitter") +
+    coord_cartesian(xlim = c(550, 900))
+```
+
+The lowest rates go to high income individuals with good credit. 
+
+
+# Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the investigation. Were there features that strengthened each other in terms of looking at your feature(s) of interest?
+
+We find that `IncomeRange` is a more powerful predictor when `IncomeVerifiable` is TRUE.
+
+### Were there any interesting or surprising interactions between features?
+
+We did not find any. The most surprising discoveries were that seeming lack of correlation between `CCRate` and `BorrowerRate`
+
+### OPTIONAL: Did you create any models with your dataset? Discuss the strengths and limitations of your model.
+
+```{r, echo=FALSE}
+m1 <- lm(sqrt(BorrowerRate) ~ sqrt(CreditScore), data = ldNew)
+m2 <- update(m1, ~ . + IncomeRange)
+m3 <- update(m2, ~ . + IsBorrowerHomeowner)
+m4 <- update(m3, ~ . + Term)
+m5 <- update(m4, ~ . + sqrt(LoanOriginalAmount))
+m6 <- update(m5, ~ . + IncomeVerifiable)
+m7 <- update(m6, ~ . + DebtToIncomeRatio)
+m8 <- update(m7, ~ . + ListingCategory)
+m9 <- update(m8, ~ . + Month)
+
+
+mtable(m5, m6, m7, m8, m9)
+```
+
+We created a linear model incorporating nine of the variables that we investigated earlier. The main strength of this method is that it uses only a small number of variables and a simple model to make its predictions. The main weakness of this method is that it does a very poor job predicting the `BorrowerRate` from the given data.  
+
+------
+
+# Final Plots and Summary
+
+### Plot One
+```{r echo=FALSE, Plot_One}
+
+#a pictorial history of ProsperLoans
+
+#start with a histogram of loans per day over time
+#overlay important dates in history 
+ 
+d<- data.frame(date=as.Date(c("2006/02/05", "2008/04/15", "2008/11/2008", 
+                              "2009/07/15", "2012/03/01", "2013/07/19")), 
+               event = c("Prosper opens for business", 
+                         "Rate cap becomes uniform 36%", 
+                         "SEC shuts Prosper down", "Prosper website reopens", 
+                         "Prosper allows IRA investment", 
+                         "Prosper settles lawsuit"))
+
+#make LoanMonth Date by giving every entry 01 as the dat
+ld$LoanMonth <- (as.Date(paste(ld$LoanMonth, "-01",sep = ""), "%Y-%m-%d"))
+
+#create a dataframe with monthly mean BorrowerRate and CCRate
+monthly_average <- ld %>%
+  group_by(LoanMonth) %>%
+  summarise(Prosper = mean(BorrowerRate), CreditCard = mean(CCRate))
+
+#gather into 3 columns - LoanMonth, Rate, Type (cc or prosper)
+Rates <- monthly_average %>%
+  gather(Type, Loan, Prosper:CreditCard)
+```
+
+```{r, echo=FALSE, fig.width=12, fig.height=10}
+vline_color = "black"
+
+volume <- ggplot(aes(x = LoanOriginationDate), data = ld) +
+  geom_histogram(binwidth = 30, color = "blue2", fill = "blue2") + 
+  geom_vline(data = d, mapping = aes(xintercept = as.numeric(date)), 
+             color = vline_color, size = .2) +
+  coord_cartesian(xlim = c(as.Date("2005/09/01"), as.Date("2014/05/01"))) +
+  geom_text(data = d, mapping = aes(x= date, y = 5500, label = event), 
+            angle = 90, vjust = -.4, size = 5, hjust = 1) +
+  theme_bw() + xlab("") + ylab("Monthly Loan Volume") +
+  scale_y_continuous(breaks = c(5000)) +
+  theme(axis.text.y = element_text(angle = 90))
+  
+
+interest <- ggplot(aes(x = LoanMonth, y = Loan * 100, color = Type), data = Rates) +
+  geom_line() +
+  scale_colour_manual(values=c("blue2", "brown1"), 
+                      labels = c("Prosper", "Credit Cards")) +
+  geom_vline(data = d, mapping = aes(xintercept = as.numeric(date)), 
+             color = vline_color, size = .2) +
+  coord_cartesian(xlim = c(as.Date("2005/09/01"), as.Date("2014/05/01"))) + 
+  theme_bw() +
+  ylab("Interest Rate (Monthly Average)") + xlab("Date") +
+  theme(axis.text.y = element_text(angle = 90), 
+        legend.position = c(.85,.2))
+
+grid.arrange(volume, interest, ncol = 1, main = "A Brief History of Prosper Loans")
+```
+
+
+### Description One
+
+The plots above are intended to give a quick overview of the history of Prosper Loans. It shows steady growth in the volume of loans on Prosper since its reopening and, more recently, a steady decrease in the average interest rate offered to its borrowers suggesting that it is attracting the more reliable borrowers that it needs to survive.
+
+
+### Plot Two
+```{r echo=FALSE, Plot_Two}
+#Best look at the major contributors to BorrowerRate using the ldNew data
+ldNew$Income2 <- factor(ntile(ldNew$IncomeRange, 3))
+#bin Income Range into 3 categories - low, middle, high
+ldNewSample <- sample_frac(ldNew, .02)
+
+#take a sample of the data? 10%
+ggplot(aes(x = CreditScore, y = BorrowerRate * 100, color = Income2, 
+           size = LoanOriginalAmount), data = ldNewSample) +
+  geom_point(position = "jitter", alpha = .8) +
+  theme_bw() + ylab("Interest Rate (%)") + xlab("Credit Score") +
+  scale_y_continuous(breaks = seq(10,35,5)) +
+  scale_color_discrete(name = "Income Group", 
+                       labels = c("Low", "Middle", "High")) +
+  scale_size_continuous(name = "Loan Amount") +
+  ggtitle("Snapshot of Prosper Loans")
+```
+
+### Description Two
+
+This plot shows a sample of loans since Prosper reopened on July 15, 2009. It shows BorrowerRate against its 3 best predictors. We see that nearly all of the large loans are to high income borrowers, that low income borrowers tend to pay very high rates and that although average rates on Prosper may be high, some borrowers are getting very attractive rates compared to other comsumption loans. 
+
+
+### Plot Three
+
+```{r echo=FALSE, Plot_Three}
+#barplot of loan counts by listing category, stacked by interest rate
+#create bins for the interest rates
+
+ldNew$RateBins <- cut(ldNew$BorrowerRate, breaks = c(0,.10, .15, .22,.29, .4), 
+                      labels = c("<10%", "10-15%", "15-22%", "20-29%", ">29%"))
+  
+ggplot(aes(x = CreditScore, color = RateBins), data = ldNew) +
+  geom_freqpoly(binwidth = 20) +
+  theme_bw() + xlab("Credit Score") + ylab("Frequency") +
+  scale_color_discrete(name = "Interest Rate") +
+  theme(legend.position = c(.8,.7)) +
+  ggtitle("Frequency of Interest Rates Based on Credit Score")
+
+```
+
+### Description Three
+
+The plot above shows the frequency of loans at different rates to borrowers with different credit scores. This plot helps to counteract the impression given by Plot 1 that Prosper borrowers will always do worse than credit card borrowers. In fact we see that many borrowers, especially those with good credit, are able to take loans at rates much more attractive than those typically offered by credit card companies. 
+
+# Reflection
+
+In this project we explored the possibility of predicting the rate that Prosper Loans would offer its borrowers based on simple information available from borrowers and their credit reports. We were unable, in this preliminary investigation of the data, to develop a model that would reliably accomplish that task. Nevertheless, important information has been developed that can aid us in the future. We were able to determine for example, that Prosper appears to place an internal ceiling on the rates it offers and that that ceiling seems to change at the beginning of the year. We also found that although aggregate interest rates at Prosper are quite high compared to other comsumption loans, there are also many loans given at much more attractive rates for more qualified borrowers. A surprise finding was the lack of a link between Prosper rates and other prevailing interest rates. 
+
+The decision to subset the data to those loans that were made since Prosper reopened with a new methodology, although a sensible one, may have resulted in useful data being discarded. Similarly, the decision to model only a fraction of the available variables allowed for more in depth analysis of those variables, but also deprived the model of potentially crticial information. 
+
+Our failure to model the rates that Prosper offers to its lenders suggests several additional courses of action. For one we should spend considerably more time increasing our domain knowledge of Prosper and of consumer lending in general. Second, we should spend more time considering the many other variables that are available from Prosper to determine which of those, if any, can improve our model.
