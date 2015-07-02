@@ -14,11 +14,14 @@ library(tidyr)
 library(dplyr)
 library(gridExtra)
 library(memisc)
+library(GGally)
+
 ```
 
 ```{r echo=FALSE, Load_the_Data}
     # Load the Data
-#setwd("/Users/kb/Documents/MOOCs/datascience/EDA/Project3_Burnham")
+
+setwd("/Users/kb/Documents/MOOCs/datascience/EDA/Project3_BurnhamK")
 loandata <- read.csv("prosperLoanData.csv")
 #keep only the variables we are interested in
 ld <-loandata[,c("Term", "LoanStatus", "ListingCreationDate", "BorrowerRate", 
@@ -28,14 +31,20 @@ ld <-loandata[,c("Term", "LoanStatus", "ListingCreationDate", "BorrowerRate",
                  "EmploymentStatus", "EmploymentStatusDuration", 
                  "IsBorrowerHomeowner", "DateCreditPulled", 
                  "CreditScoreRangeLower", "FirstRecordedCreditLine", 
+                 "CurrentCreditLines", "OpenCreditLines",
+                 "OpenRevolvingAccounts", "OpenRevolvingMonthlyPayment",
+                 "InquiriesLast6Months", "TotalInquiries",
+                 "RevolvingCreditBalance", "BankcardUtilization",
                  "CurrentDelinquencies", "AmountDelinquent", 
-                 "DelinquenciesLast7Years", "DebtToIncomeRatio","IncomeRange",
+                 "DelinquenciesLast7Years", "PublicRecordsLast10Years", 
+                 "PublicRecordsLast12Months",
+                  "DebtToIncomeRatio","IncomeRange",
                  "IncomeVerifiable", "LoanOriginalAmount", 
                  "LoanOriginationDate", "LoanOriginationQuarter", 
                  "ListingCreationDate")]
 
 #change some column names
-#note - the relationship between CreditScoreLower and Upper is perfectly linear
+#note - the relationship between CreditScoreLower and CreditScoreUpper is perfectly linear
 ld <- plyr::rename(ld, c("ProsperRating..numeric." = "ProsperRating",
                          "ListingCategory..numeric." = "ListingCategory",
                          "CreditScoreRangeLower" = "CreditScore"))
@@ -106,7 +115,6 @@ ld <- merge(ld, CCRate)
 Now let's look at some of our variables. Our dependent variable is `BorrowerRate`. We are trying to predict the rate that a borrower would be offered on the Prosper website. Also, since Prosper changed how it set the rates for its loans we will create a `NewRegime` variable that is `TRUE` if the loan has a `ProsperRating`, the first of which occurs on July 20, 2009.
 
 ```{r echo=FALSE, warning=FALSE, Univariate_Plots}
-
 ld$NewRegime <- !is.na(ld$ProsperRating)
 
 print("Summary of Borrower Rate")
@@ -127,7 +135,6 @@ p2 <- ggplot(aes(x = sqrt(BorrowerRate)), data = subset(ld, NewRegime == T)) +
   ggtitle("Loans since July 20 2009")
 
 grid.arrange(p1, p2, ncol = 2)
-
 ```
 
 The data appear to be more normally distributed when square root transformed. The older data contain a number of very low interest rates (including 0) which are not found in the new data. In either event we note a spike in rates at around 35%. We need to investigate this spike since the presence of these outlier values will surely affect the predictions of our linear model. 
@@ -237,7 +244,7 @@ ld$IsCeiling <-
 ```
 
 
-So it appears that the spike we see in the histogram of all rates around 34% is due to a cap on the rates that Prosper offers to its borrowers (or at least most of them). That cap changes about once a year, but it remains unclear if it is due to regulatory factors or internal Prosper decisions. According to [this article](https://b5c87fc5-a-62cb3a1a-s-sites.googlegroups.com/site/origbi/UsuryLaws.pdf?attachauth=ANoY7co2DMZiQ3ib-xpGPjFRYgDcZX5M3BUrocX4NED2KiXHgIZOR8jqsPSreCmz_kUuxHWL0qnLOnay0Uz8g3-Gbw7LpNKlb-BFlZuntj_sMzTrR-NsLp9kgsLePOdCIPfkoCMnuKw1KV2Rukhf9mloL02h3yHyTymq73GzzUFUQBmaiua6TB_BUoILkNqfZjB-AhLyv5MrRGq_ATQMFG2MhhsYJanm-w%3D%3D&attredirects=0) up until April 15 2008 the maximum rate Prosper could offer a lender was determined by regulations in the borrowers state, but after that point there was a cap of 36% for all states except Texas. This suggests that the rate ceilings we are finding in the data are set internally by Prosper. 
+So it appears that the spike we see in the histogram of all rates around 34% is due to a cap on the rates that Prosper offers to its borrowers (or at least most of them). That cap changes about once a year, but it remains unclear if it is due to regulatory factors or internal Prosper decisions. According to [this article](https://b5c87fc5-a-62cb3a1a-s-sites.googlegroups.com/site/origbi/UsuryLaws.pdf) up until April 15 2008 the maximum rate Prosper could offer a lender was determined by regulations in the borrowers state, but after that point there was a cap of 36% for all states except Texas. This suggests that the rate ceilings we are finding in the data are set internally by Prosper. 
 
 Since we are ultimately interested in predicting rates offered by Prosper, from this point forward we will mainly be interested in loans made since December 19 2009 under the new rate setting mechanism. We subset the data accordingly before analyzing independent variables. 
 
@@ -252,7 +259,6 @@ Now we look at our independent variables, many of which are ranked. We expect th
 - `LoanOriginalAmount`
 
 ```{r, echo=FALSE}
-
 summary(ldNew$LoanOriginalAmount)
 
 p1 <- ggplot(aes(x = LoanOriginalAmount), data = ldNew) + 
@@ -286,7 +292,7 @@ ggplot(aes(x = IncomeRange), data = ldNew) +
   geom_histogram()
 ```
  
-- `CreditRating` - this number is obtained from a traditional credit report. The untransformed data is positively skewed, but looks more normal when square root transformed. 
+- `CreditScore` - this number is obtained from a traditional credit report. The untransformed data is positively skewed, but looks more normal when square root transformed. 
 
 ```{r echo=FALSE}
 summary(ldNew$CreditScore)
@@ -371,16 +377,154 @@ We now want to look at the relationship between our dependent variable (`Borrowe
 ```{r echo=FALSE, Bivariate_Plots}
 result <- as.character(round(cor(ldNew$CreditScore, sqrt(ldNew$BorrowerRate)), digits = 4))
 
-#sqrt(BorrowerRate) vs. CreditRating
+#sqrt(BorrowerRate) vs. CreditScore
 ggplot(aes(x = CreditScore, y = sqrt(BorrowerRate)), data = ldNew) +
-  geom_point(alpha = .03, position = "jitter") +
+  geom_point(alpha = .02, position = "jitter") +
   stat_smooth(method = "lm") +
   annotate("text", x = 860, y = .6, label = paste("r = ", result))
 
 ```
 
- - This scatter plot does seem to show the expected negative correlation between `CreditScore` and `BorrowerRate`, though we also note that the data are very noisy. A Pearson's test of reveals a negative correlation between `CreditScore` and `BorrowerRate` (r = `r result`) and so is a good candidate for inclusion in our model.
+ - This scatter plot does seem to show the expected negative correlation between `CreditScore` and `BorrowerRate`, though we also note that the data are very noisy. A Pearson's test reveals a negative correlation between `CreditScore` and `BorrowerRate` (r = `r result`) and so is a good candidate for inclusion in our model.
+ 
+Since `CreditScore` has such a strong relationship with `BorrowerRate` we will investigate the relationship between `CreditScore` and some of its components to determine which seem to most strongly effect it. 
 
+ + `DelinquenciesLast7Years` - Most appear to have no delinquencies on their record, but for those that do, it affects their `CreditScore` negatively. We see that the upper right corner of the graph is empty meaning that those with delinquencies almost never have high credit scores. Alternatively, no delinquencies is not a guarantee of a good credit score.
+
+```{r echo=FALSE}
+#which are the most important components of CreditScore
+ggplot(aes(x = DelinquenciesLast7Years), data = ldNew) + 
+  geom_histogram(binwidth = 1) + 
+  xlim(c(0,40))
+
+ggplot(aes(x = DelinquenciesLast7Years, y = CreditScore), data = sample_n(ldNew, 20000)) +
+  geom_point(alpha = .3, position = "jitter")
+
+cor(ldNew$CreditScore, ldNew$DelinquenciesLast7Years)
+
+```
+
+ + `DebtToIncomeRatio` - Surprisingly, `DebtToIncomeRatio` does not have a strong relationship with `CreditScore`. Some borrowers with debts 10 times thier income still have credit scores over 800.
+
+```{r, echo=FALSE}
+
+ggplot(aes(DebtToIncomeRatio), data = ldNew) +
+  geom_histogram(binwidth = .01) +
+  xlim(c(0,2))
+
+ggplot(aes(x = DebtToIncomeRatio, y = CreditScore), data = ldNew) +
+  geom_point(alpha = .1)
+
+ggplot(aes(x = DebtToIncomeRatio, y = CreditScore), data = sample_n(ldNew, 20000)) +
+  geom_point(alpha = .2)
+  
+cor(ldNew$CreditScore[!is.na(ldNew$DebtToIncomeRatio)], ldNew$DebtToIncomeRatio[!is.na(ldNew$DebtToIncomeRatio)])
+
+```
+
+ + `AmountDelinquent` - the fact of a delinquency seems to be more important than the amount when computing a `CreditScore`. We find only a small corelation between `AmountDelinquent` and `CreditScore`.
+
+```{r, echo=FALSE}
+
+
+ggplot(aes(x = log(AmountDelinquent)), data = ldNew) +
+  geom_histogram(binwidth = .1) +
+  xlim(c(0, 20))
+
+ggplot(aes(x = AmountDelinquent, y = CreditScore), data = ldNew) +
+  geom_point(alpha = .1)
+
+
+
+cor(ldNew$AmountDelinquent, ldNew$CreditScore)
+
+```
+  
++ `TotalInquiries` - We find a weak negative correlation between the number of inquiries on an individual's credit report and their `CreditScore`.
+
+```{r, echo=FALSE}
+
+ggplot(aes(x = TotalInquiries), data = ldNew) +
+  geom_histogram(binwidth = 1)
+
+ggplot(aes(x = TotalInquiries, y = CreditScore), data = sample_n(ldNew, 10000)) +
+  geom_point(position = "jitter", alpha = .3)
+
+cor(ldNew$CreditScore, ldNew$TotalInquiries)
+
+```
+
++ `InquiriesLast6Months` - There is also a weak correlation between `CreditScore` and the number of recent inquiries.
+
+```{r, echo=FALSE}
+
+ggplot(aes(x = InquiriesLast6Months), data = ldNew) +
+  geom_histogram(binwidth = 1)
+
+ggplot(aes(x = InquiriesLast6Months, y = CreditScore), data = ldNew) +
+  geom_point(alpha = .03, position = "jitter") +
+  xlim(c(0,20))
+
+cor(ldNew$CreditScore, ldNew$InquiriesLast6Months)
+
+```
+
++ `DaySinceFirstCredit` - We create this column using the difference between `DaysSinceFirstCredit` and `Date`. We find a small correlation between this variable and `CreditScore`.
+
+```{r, echo=FALSE}
+
+ldNew$DaysSinceFirstCredit <- as.numeric(ldNew$Date - ldNew$FirstRecordedCreditLine)
+
+ggplot(aes(x = DaysSinceFirstCredit), data = ldNew) +
+  geom_histogram(binwidth = 100)
+
+cor(ldNew$DaysSinceFirstCredit, ldNew$CreditScore)
+
+```
+
++ `EmploymentStatusDuration` - We transform this variable with square root to help normalize the distribution, but find almost no correlation between it and `CreditScore`.
+
+```{r, echo=FALSE}
+
+ggplot(aes(x = sqrt(EmploymentStatusDuration)), data = ldNew) + 
+  geom_histogram()
+
+ggplot(aes(x = EmploymentStatusDuration, y = CreditScore), data = sample_n(ldNew, 10000)) + 
+  geom_point(alpha = .1, position = "jitter")
+
+cor(sqrt(ldNew$EmploymentStatusDuration[!is.na(ldNew$EmploymentStatusDuration)]), ldNew$CreditScore[!is.na(ldNew$EmploymentStatusDuration)])
+
+```
+
++ `RevolvingCreditBalance` - The relationship between `RevolvingCreditBalance` and `CreditScore` is not straight forward. Individuals with high credit balances are clustered in the middle range of credit scores. This makes some sense since indivudals with low credit scores are unlikely to have the opportunity to take on much debt and individuals that do take on a lot of debt are likely to see their credit scores go lower. It would be interesting to see historical data to see if the individuals with very high `RevolvingCreditBalance` previously had much higher credit scores. 
+
+```{r, echo=FALSE}
+ggplot(aes(x = log(RevolvingCreditBalance)), data = ldNew) +
+  geom_histogram(binwidth = .1)
+
+ggplot(aes(x = RevolvingCreditBalance, y = CreditScore), data = sample_n(ldNew, 20000)) +
+  geom_point(alpha = .1, position = "jitter") +
+  xlim(c(0,50000))
+
+cor(ldNew$CreditScore, ldNew$RevolvingCreditBalance)
+
+
+```
+
++ `BankcardUtilizaiton` - we find a relatively strong relationship between this variable and `CreditScore`. This makes sense since individuals using all of their avaialble credit are not good candidates for additional loans.
+
+```{r, echo=TRUE}
+ggplot(aes(x = BankcardUtilization), data = ldNew) + 
+  geom_histogram(binwidth = .01) + 
+  xlim(c(0,1.3))
+  
+ggplot(aes(x = BankcardUtilization, y = CreditScore), data = sample_n(ldNew, 20000)) +
+  geom_point(position = "jitter", alpha = .1) +
+  xlim(c(0,1.5))
+
+cor(ldNew$BankcardUtilization, ldNew$CreditScore)
+```
+ 
  - `IncomeRange`
 
 ```{r, echo=FALSE}
@@ -551,7 +695,7 @@ Those that are unable to provide proof of their stated income pay higher rates. 
 
 ```{r, echo=FALSE}
 ggplot(aes(x = CreditScore, y = BorrowerRate, color = IsBorrowerHomeowner), 
-       data = ldNew) +
+       data = sample_n(ldNew, 10000)) +
     geom_point(alpha = 1, position = "jitter") +
     coord_cartesian(xlim = c(550, 900))
 ```
@@ -560,13 +704,19 @@ The lowest rates are payed by homeowners with good credit.
 
 ```{r, echo=FALSE}
 ggplot(aes(x = CreditScore, y = BorrowerRate, color = IncomeRange), 
-       data = ldNew) +
-    geom_point(alpha = 1, position = "jitter") +
+       data = sample_n(ldNew, 20000)) +
+    geom_point(alpha = .5, position = "jitter") +
     coord_cartesian(xlim = c(550, 900))
+    
 ```
 
 The lowest rates go to high income individuals with good credit. 
 
+```{r, echo=FALSE}
+ggplot(aes(x = BankcardUtilization, y = BorrowerRate), data = sample_n(ldNew, 10000)) +
+  geom_point(position = "jitter", alpha = .2) +
+  stat_smooth(method = "lm")
+```
 
 # Multivariate Analysis
 
